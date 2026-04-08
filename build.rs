@@ -524,11 +524,6 @@ fn get_link_libraries(
         llvm_config_path: &Path,
         kind: LibraryKind,
     ) -> anyhow::Result<String> {
-        if target_env_is("msvc") && kind == LibraryKind::Dynamic {
-            // Upstream work on support: https://github.com/llvm/llvm-project/issues/109483
-            anyhow::bail!("Dynamic linking to LLVM is not currently supported on Windows");
-        }
-
         let link_arg = match kind {
             LibraryKind::Static => "--link-static",
             LibraryKind::Dynamic => "--link-shared",
@@ -716,14 +711,6 @@ fn main() {
         Some(llvm_config_path) => llvm_config_path,
     };
 
-    // Build the extra wrapper functions.
-    if !cfg!(feature = "disable-alltargets-init") {
-        std::env::set_var("CFLAGS", get_llvm_cflags(&llvm_config_path));
-        cc::Build::new()
-            .file("wrappers/target.c")
-            .compile("targetwrappers");
-    }
-
     if cfg!(feature = "no-llvm-linking") {
         return;
     }
@@ -746,6 +733,17 @@ fn main() {
     let (kind, libs) = get_link_libraries(&llvm_config_path, &preferences);
     for name in libs {
         println!("cargo:rustc-link-lib={}={}", kind.string(), name);
+    }
+
+    // Build the extra wrapper functions.
+    if !cfg!(feature = "disable-alltargets-init") {
+        std::env::set_var("CFLAGS", get_llvm_cflags(&llvm_config_path));
+        let mut build = cc::Build::new();
+        build.file("wrappers/target.c");
+        if let LibraryKind::Static = kind {
+            build.define("LLVM_BUILD_STATIC", None);
+        }
+        build.compile("targetwrappers");
     }
 
     // Link system libraries
